@@ -137,6 +137,7 @@ def main():
     parser.add_argument(
         "-d", "--dataset", type=str, default="togethercomputer/RedPajama-Data-1T-Sample", help="Data set path"
     )
+    parser.add_argument("--dataset_config_name", type=str, default=None, help="The configuration name of the dataset to use (via the datasets library).")
     parser.add_argument("-e", "--num_epochs", type=int, default=1, help="Number of epochs")
     parser.add_argument("-b", "--batch_size", type=int, default=2, help="Local batch size")
     parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
@@ -211,7 +212,7 @@ def main():
     # follows fast chat: https://github.com/lm-sys/FastChat/blob/main/fastchat/train/train.py#L257
     tokenizer.pad_token = tokenizer.unk_token
 
-    dataset = load_dataset(args.dataset)
+    dataset = load_dataset(args.dataset, args.dataset_config_name)
 
     # Main data processing function that will concatenate all texts from our dataset and generate chunks of block_size.
     def group_texts(examples):
