@@ -11,6 +11,7 @@ import torch.nn as nn
 from attn import SUPPORT_XFORMERS, replace_xformers
 from data_utils import load_json, prepare_dataloader, save_json
 from datasets import load_dataset
+from itertools import chain
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 from torch.utils.tensorboard import SummaryWriter
@@ -136,7 +137,6 @@ def main():
     parser.add_argument(
         "-d", "--dataset", type=str, default="togethercomputer/RedPajama-Data-1T-Sample", help="Data set path"
     )
-    parser.add_argument("--dataset_config_name", type=str, default=None, help="The configuration name of the dataset to use (via the datasets library).")
     parser.add_argument("-e", "--num_epochs", type=int, default=1, help="Number of epochs")
     parser.add_argument("-b", "--batch_size", type=int, default=2, help="Local batch size")
     parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
@@ -211,7 +211,33 @@ def main():
     # follows fast chat: https://github.com/lm-sys/FastChat/blob/main/fastchat/train/train.py#L257
     tokenizer.pad_token = tokenizer.unk_token
 
-    dataset = load_dataset(args.dataset, args.dataset_config_name)
+    dataset = load_dataset(args.dataset)
+
+    # Main data processing function that will concatenate all texts from our dataset and generate chunks of block_size.
+    def group_texts(examples):
+        # Concatenate all texts.
+        concatenated_examples = {k: list(chain(*examples[k])) for k in examples.keys()}
+        total_length = len(concatenated_examples[list(examples.keys())[0]])
+        # We drop the small remainder, and if the total_length < block_size  we exclude this batch and return an empty dict.
+        # We could add padding if the model supported it instead of this drop, you can customize this part to your needs.
+        total_length = (total_length // args.max_length) * args.max_length
+        # Split by chunks of max_len.
+        result = {
+            k: [t[i : i + args.max_length] for i in range(0, total_length, args.max_length)]
+            for k, t in concatenated_examples.items()
+        }
+        result["labels"] = result["input_ids"].copy()
+        return result
+
+    # Note that with `batched=True`, this map processes 1,000 texts together, so group_texts throws away a remainder
+    # for each of those groups of 1,000 texts. You can adjust that batch_size here but a higher value might be slower
+    # to preprocess.
+    #
+    # To speed up this part, we use multiprocessing. See the documentation of the map method for more information:
+    # https://huggingface.co/docs/datasets/package_reference/main_classes.html#datasets.Dataset.map
+    
+    dataset = dataset.map(group_texts, batched=True)
+
     train_ds = dataset["train"]
     dataloader = prepare_dataloader(
         train_ds,
