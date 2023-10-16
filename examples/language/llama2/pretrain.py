@@ -17,7 +17,7 @@ from torch.optim.lr_scheduler import _LRScheduler
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import transformers
-from transformers import default_data_collator
+from transformers import DataCollatorForLanguageModeling
 from transformers.models.llama.configuration_llama import LlamaConfig
 from transformers.models.llama.modeling_llama import LlamaForCausalLM
 from transformers.models.llama.tokenization_llama import LlamaTokenizer
@@ -243,8 +243,8 @@ def main():
             k: torch.Tensor([t[i : i + args.max_length] for i in range(0, total_length, args.max_length)]).cuda()
             for k, t in concatenated_examples.items()
         }
-        result["labels"] = result["input_ids"].copy()
-        return result
+        # result["labels"] = result["input_ids"].clone()
+        return result 
 
     # Note that with `batched=True`, this map processes 1,000 texts together, so group_texts throws away a remainder
     # for each of those groups of 1,000 texts. You can adjust that batch_size here but a higher value might be slower
@@ -262,13 +262,19 @@ def main():
     lm_dataset = tokenized_dataset.map(group_texts, batched=True)
     train_ds = lm_dataset["train"]
 
+    data_collator = DataCollatorForLanguageModeling(
+        tokenizer,
+        mlm=False,
+    )
+
     dataloader = prepare_dataloader(
         train_ds,
         batch_size=args.batch_size,
         shuffle=True,
         drop_last=True,
         #collate_fn=partial(tokenize_batch_for_pretrain, tokenizer=tokenizer, max_length=args.max_length),
-        collate_fn=default_data_collator,
+        #collate_fn=default_data_collator,
+        collate_fn=data_collator,
     )
 
     # ==============================
