@@ -291,7 +291,7 @@ def main():
     )
 
     # Device map should dynamically move input tensors to GPU
-    data_loader = DeviceMap(data_loader)
+    dataloader = DeviceMap(dataloader)
 
     # ==============================
     # Initialize Model, Optimizer and LR Scheduler
