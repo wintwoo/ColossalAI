@@ -65,6 +65,12 @@ class DeviceMap:
     def __iter__(self):
         return map(self._map, self._dataloader)
 
+    def __len__(self):
+        return len(self._dataloader)
+
+    def __iter__(self):
+        return iter(self._dataloader)
+
 
 def get_model_numel(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters())
