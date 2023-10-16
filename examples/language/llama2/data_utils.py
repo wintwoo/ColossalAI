@@ -77,23 +77,23 @@ def prepare_dataloader(
     )
 
 
-    def prepare_dataloader_no_tokenize(
+def prepare_dataloader_no_tokenize(
+    dataset,
+    batch_size,
+    shuffle=False,
+    drop_last=False,
+    pin_memory=False,
+    num_workers=0,
+):
+    return DataLoader(
         dataset,
-        batch_size,
-        shuffle=False,
-        drop_last=False,
-        pin_memory=False,
-        num_workers=0,
-    ):
-        return DataLoader(
-            dataset,
-            shuffle=shuffle,
-            collate_fn=default_data_collator,
-            batch_size=batch_size,
-            drop_last=drop_last,
-            pin_memory=pin_memory,
-            num_workers=num_workers,
-        )
+        shuffle=shuffle,
+        collate_fn=default_data_collator,
+        batch_size=batch_size,
+        drop_last=drop_last,
+        pin_memory=pin_memory,
+        num_workers=num_workers,
+    )
 
     # Deterministic dataloader
     def seed_worker(worker_id):
