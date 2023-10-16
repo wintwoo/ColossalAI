@@ -9,7 +9,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 from attn import SUPPORT_XFORMERS, replace_xformers
-from data_utils import load_json, prepare_dataloader, save_json
+from data_utils import load_json, prepare_dataloader_no_tokenize, save_json
 from datasets import load_dataset
 from itertools import chain
 from torch.optim import Optimizer
@@ -77,7 +77,6 @@ def tokenize_batch_for_pretrain(batch, tokenizer: Optional[LlamaTokenizer] = Non
     data = {k: v.cuda() for k, v in data.items()}
     data["labels"] = data["input_ids"].clone()
     return data
-
 
 def all_reduce_mean(tensor: torch.Tensor) -> torch.Tensor:
     dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
@@ -262,12 +261,19 @@ def main():
     lm_dataset = tokenized_dataset.map(group_texts, batched=True)
     train_ds = lm_dataset["train"]
 
-    dataloader = prepare_dataloader(
+    # dataloader = prepare_dataloader(
+    #     train_ds,
+    #     batch_size=args.batch_size,
+    #     shuffle=True,
+    #     drop_last=True,
+    #     collate_fn=partial(tokenize_batch_for_pretrain, tokenizer=tokenizer, max_length=args.max_length),
+    # )
+
+    dataloader = prepare_dataloader_no_tokenize(
         train_ds,
         batch_size=args.batch_size,
         shuffle=True,
-        drop_last=True,
-        collate_fn=partial(tokenize_batch_for_pretrain, tokenizer=tokenizer, max_length=args.max_length),
+        drop_last=False,
     )
 
     # ==============================
