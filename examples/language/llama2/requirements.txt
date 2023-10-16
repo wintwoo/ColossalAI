@@ -1,10 +1,10 @@
-colossalai>=0.3.2
+# colossalai>=0.3.2
 datasets
-numpy
+# numpy
 # torch>=1.12.0,<=2.0.0
-tqdm
+# tqdm
 transformers==4.33.0
 flash-attn>=2.0.0,<=2.0.5
 SentencePiece==0.1.99
 tensorboard==2.14.0
-xformers==0.0.22
+
