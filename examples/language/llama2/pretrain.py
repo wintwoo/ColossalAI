@@ -16,9 +16,11 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+import transformers
 from transformers.models.llama.configuration_llama import LlamaConfig
 from transformers.models.llama.modeling_llama import LlamaForCausalLM
 from transformers.models.llama.tokenization_llama import LlamaTokenizer
+from transformers.testing_utils import CaptureLogger
 
 import colossalai
 from colossalai.booster import Booster
@@ -28,6 +30,8 @@ from colossalai.lazy import LazyInitContext
 from colossalai.nn.lr_scheduler import CosineAnnealingWarmupLR
 from colossalai.nn.optimizer import HybridAdam
 from colossalai.utils import get_current_device
+
+tok_logger = transformers.utils.logging.get_logger("transformers.tokenization_utils_base")
 
 MODEL_CONFIGS = {
     "7b": LlamaConfig(max_position_embeddings=4096),
@@ -138,6 +142,7 @@ def main():
         "-d", "--dataset", type=str, default="togethercomputer/RedPajama-Data-1T-Sample", help="Data set path"
     )
     parser.add_argument("--dataset_config_name", type=str, default=None, help="The configuration name of the dataset to use (via the datasets library).")
+    parser.add_argument("--text_column_name", type=str, default="text", help="Name of the dataset text column.")
     parser.add_argument("-e", "--num_epochs", type=int, default=1, help="Number of epochs")
     parser.add_argument("-b", "--batch_size", type=int, default=2, help="Local batch size")
     parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
@@ -214,6 +219,17 @@ def main():
 
     dataset = load_dataset(args.dataset, args.dataset_config_name)
 
+    def tokenize_function(examples):
+        with CaptureLogger(tok_logger) as cl:
+            output = tokenizer(examples[args.text_column_name])
+        # clm input could be much much longer than block_size
+        if "Token indices sequence length is longer than the" in cl.out:
+            tok_logger.warning(
+                "^^^^^^^^^^^^^^^^ Please ignore the warning above - this long input will be chunked into smaller bits"
+                " before being passed to the model."
+            )
+        return output
+
     # Main data processing function that will concatenate all texts from our dataset and generate chunks of block_size.
     def group_texts(examples):
         # Concatenate all texts.
@@ -237,9 +253,15 @@ def main():
     # To speed up this part, we use multiprocessing. See the documentation of the map method for more information:
     # https://huggingface.co/docs/datasets/package_reference/main_classes.html#datasets.Dataset.map
     
-    dataset = dataset.map(group_texts, batched=True)
+    column_names = list(dataset["train"].features)
+    tokenized_dataset = dataset.map(
+        tokenize_function,
+        batched=True,
+        remove_columns=column_names,
+    )
+    lm_dataset = tokenized_dataset.map(group_texts, batched=True)
+    train_ds = lm_dataset["train"]
 
-    train_ds = dataset["train"]
     dataloader = prepare_dataloader(
         train_ds,
         batch_size=args.batch_size,
