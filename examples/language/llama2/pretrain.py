@@ -9,7 +9,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 from attn import SUPPORT_XFORMERS, replace_xformers
-from data_utils import load_json, prepare_dataloader_no_tokenize, save_json
+from data_utils import load_json, prepare_dataloader, save_json
 from datasets import load_dataset
 from itertools import chain
 from torch.optim import Optimizer
@@ -17,6 +17,7 @@ from torch.optim.lr_scheduler import _LRScheduler
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import transformers
+from transformers import default_data_collator
 from transformers.models.llama.configuration_llama import LlamaConfig
 from transformers.models.llama.modeling_llama import LlamaForCausalLM
 from transformers.models.llama.tokenization_llama import LlamaTokenizer
@@ -261,19 +262,13 @@ def main():
     lm_dataset = tokenized_dataset.map(group_texts, batched=True)
     train_ds = lm_dataset["train"]
 
-    # dataloader = prepare_dataloader(
-    #     train_ds,
-    #     batch_size=args.batch_size,
-    #     shuffle=True,
-    #     drop_last=True,
-    #     collate_fn=partial(tokenize_batch_for_pretrain, tokenizer=tokenizer, max_length=args.max_length),
-    # )
-
-    dataloader = prepare_dataloader_no_tokenize(
+    dataloader = prepare_dataloader(
         train_ds,
         batch_size=args.batch_size,
         shuffle=True,
-        drop_last=False,
+        drop_last=True,
+        #collate_fn=partial(tokenize_batch_for_pretrain, tokenizer=tokenizer, max_length=args.max_length),
+        collate_fn=default_data_collator,
     )
 
     # ==============================

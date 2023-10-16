@@ -7,7 +7,6 @@ import torch
 from torch.distributed import ProcessGroup
 from torch.distributed.distributed_c10d import _get_default_group
 from torch.utils.data import DataLoader, Dataset, DistributedSampler
-from transformers import default_data_collator
 
 from colossalai.utils import get_current_device
 
@@ -76,6 +75,23 @@ def prepare_dataloader(
         dataset, num_replicas=process_group.size(), rank=process_group.rank(), shuffle=shuffle
     )
 
+    # Deterministic dataloader
+    def seed_worker(worker_id):
+        worker_seed = seed
+        np.random.seed(worker_seed)
+        torch.manual_seed(worker_seed)
+        random.seed(worker_seed)
+
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        sampler=sampler,
+        worker_init_fn=seed_worker,
+        drop_last=drop_last,
+        pin_memory=pin_memory,
+        num_workers=num_workers,
+        **_kwargs,
+    )
 
 def prepare_dataloader_no_tokenize(
     dataset,
@@ -93,24 +109,6 @@ def prepare_dataloader_no_tokenize(
         drop_last=drop_last,
         pin_memory=pin_memory,
         num_workers=num_workers,
-    )
-
-    # Deterministic dataloader
-    def seed_worker(worker_id):
-        worker_seed = seed
-        np.random.seed(worker_seed)
-        torch.manual_seed(worker_seed)
-        random.seed(worker_seed)
-
-    return DataLoader(
-        dataset,
-        batch_size=batch_size,
-        sampler=sampler,
-        worker_init_fn=seed_worker,
-        drop_last=drop_last,
-        pin_memory=pin_memory,
-        num_workers=num_workers,
-        **_kwargs,
     )
 
 
