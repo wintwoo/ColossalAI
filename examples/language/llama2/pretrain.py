@@ -53,6 +53,18 @@ MODEL_CONFIGS = {
     ),
 }
 
+class DeviceMap:
+    def __init__(self, dataloader, device=0):
+        self._dataloader = dataloader
+        self._device = device
+
+    def _map(self, batch):
+        x, t = batch
+        return x.to(device=self._device), t.to(device=self._device)
+
+    def __iter__(self):
+        return map(self._map, self._dataloader)
+
 
 def get_model_numel(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters())
@@ -240,10 +252,10 @@ def main():
         total_length = (total_length // args.max_length) * args.max_length
         # Split by chunks of max_len.
         result = {
-            k: torch.Tensor([t[i : i + args.max_length] for i in range(0, total_length, args.max_length)]).cuda()
+            k: [t[i : i + args.max_length] for i in range(0, total_length, args.max_length)]
             for k, t in concatenated_examples.items()
         }
-        # result["labels"] = result["input_ids"].clone()
+        # result["labels"] = result["input_ids"].copy()
         return result 
 
     # Note that with `batched=True`, this map processes 1,000 texts together, so group_texts throws away a remainder
@@ -262,6 +274,7 @@ def main():
     lm_dataset = tokenized_dataset.map(group_texts, batched=True)
     train_ds = lm_dataset["train"]
 
+    # DataCollatorForLanguageModeling should automatically copy input_ids to labels
     data_collator = DataCollatorForLanguageModeling(
         tokenizer,
         mlm=False,
@@ -276,6 +289,9 @@ def main():
         #collate_fn=default_data_collator,
         collate_fn=data_collator,
     )
+
+    # Device map should dynamically move input tensors to GPU
+    data_loader = DeviceMap(data_loader)
 
     # ==============================
     # Initialize Model, Optimizer and LR Scheduler
