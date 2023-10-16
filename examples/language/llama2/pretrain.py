@@ -53,24 +53,10 @@ MODEL_CONFIGS = {
     ),
 }
 
-class DeviceMap:
-    def __init__(self, dataloader, device=0):
-        self._dataloader = dataloader
-        self._device = device
-
-    def _map(self, batch):
-        x, t = batch
-        return x.to(device=self._device), t.to(device=self._device)
-
-    def __iter__(self):
-        return map(self._map, self._dataloader)
-
-    def __len__(self):
-        return len(self._dataloader)
-
-    def __iter__(self):
-        return iter(self._dataloader)
-
+def batch_to_cuda(batch):
+    for k in batch.keys():
+        batch[k] = torch.Tensor(batch[k]).cuda()
+    return batch
 
 def get_model_numel(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters())
@@ -296,9 +282,6 @@ def main():
         collate_fn=data_collator,
     )
 
-    # Device map should dynamically move input tensors to GPU
-    dataloader = DeviceMap(dataloader)
-
     # ==============================
     # Initialize Model, Optimizer and LR Scheduler
     # ==============================
@@ -368,7 +351,7 @@ def main():
                     )
                     loss = outputs["loss"]
                 else:
-                    batch = next(dataloader_iter)
+                    batch = batch_to_cuda(next(dataloader_iter))
                     outputs = model(**batch)
                     loss = outputs[0]
                     booster.backward(loss, optimizer)
