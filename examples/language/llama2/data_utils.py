@@ -77,7 +77,7 @@ def prepare_dataloader(
     )
 
 
-    def prepare_data_loader_no_tokenize(
+    def prepare_dataloader_no_tokenize(
         dataset,
         batch_size,
         shuffle=False,
