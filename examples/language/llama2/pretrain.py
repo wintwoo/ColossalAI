@@ -240,7 +240,7 @@ def main():
         total_length = (total_length // args.max_length) * args.max_length
         # Split by chunks of max_len.
         result = {
-            k: [torch.Tensor(t[i : i + args.max_length]).cuda() for i in range(0, total_length, args.max_length)]
+            k: torch.Tensor([t[i : i + args.max_length] for i in range(0, total_length, args.max_length)]).cuda()
             for k, t in concatenated_examples.items()
         }
         result["labels"] = result["input_ids"].copy()
