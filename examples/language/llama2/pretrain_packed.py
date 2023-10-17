@@ -11,13 +11,17 @@ import torch.nn as nn
 from attn import SUPPORT_XFORMERS, replace_xformers
 from data_utils import load_json, prepare_dataloader, save_json
 from datasets import load_dataset
+from itertools import chain
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+import transformers
+from transformers import DataCollatorForLanguageModeling
 from transformers.models.llama.configuration_llama import LlamaConfig
 from transformers.models.llama.modeling_llama import LlamaForCausalLM
 from transformers.models.llama.tokenization_llama import LlamaTokenizer
+from transformers.testing_utils import CaptureLogger
 
 import colossalai
 from colossalai.booster import Booster
@@ -27,6 +31,8 @@ from colossalai.lazy import LazyInitContext
 from colossalai.nn.lr_scheduler import CosineAnnealingWarmupLR
 from colossalai.nn.optimizer import HybridAdam
 from colossalai.utils import get_current_device
+
+tok_logger = transformers.utils.logging.get_logger("transformers.tokenization_utils_base")
 
 MODEL_CONFIGS = {
     "7b": LlamaConfig(max_position_embeddings=4096),
@@ -47,6 +53,10 @@ MODEL_CONFIGS = {
     ),
 }
 
+def batch_to_cuda(batch):
+    for k in batch.keys():
+        batch[k] = torch.Tensor(batch[k]).cuda()
+    return batch
 
 def get_model_numel(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters())
@@ -72,7 +82,6 @@ def tokenize_batch_for_pretrain(batch, tokenizer: Optional[LlamaTokenizer] = Non
     data = {k: v.cuda() for k, v in data.items()}
     data["labels"] = data["input_ids"].clone()
     return data
-
 
 def all_reduce_mean(tensor: torch.Tensor) -> torch.Tensor:
     dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
@@ -136,6 +145,8 @@ def main():
     parser.add_argument(
         "-d", "--dataset", type=str, default="togethercomputer/RedPajama-Data-1T-Sample", help="Data set path"
     )
+    parser.add_argument("--dataset_config_name", type=str, default=None, help="The configuration name of the dataset to use (via the datasets library).")
+    parser.add_argument("--text_column_name", type=str, default="text", help="Name of the dataset text column.")
     parser.add_argument("-e", "--num_epochs", type=int, default=1, help="Number of epochs")
     parser.add_argument("-b", "--batch_size", type=int, default=2, help="Local batch size")
     parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
@@ -210,14 +221,65 @@ def main():
     # follows fast chat: https://github.com/lm-sys/FastChat/blob/main/fastchat/train/train.py#L257
     tokenizer.pad_token = tokenizer.unk_token
 
-    dataset = load_dataset(args.dataset)
-    train_ds = dataset["train"]
+    dataset = load_dataset(args.dataset, args.dataset_config_name)
+
+    def tokenize_function(examples):
+        with CaptureLogger(tok_logger) as cl:
+            output = tokenizer(examples[args.text_column_name])
+        # clm input could be much much longer than block_size
+        if "Token indices sequence length is longer than the" in cl.out:
+            tok_logger.warning(
+                "^^^^^^^^^^^^^^^^ Please ignore the warning above - this long input will be chunked into smaller bits"
+                " before being passed to the model."
+            )
+        return output
+
+    # Main data processing function that will concatenate all texts from our dataset and generate chunks of block_size.
+    def group_texts(examples):
+        # Concatenate all texts.
+        concatenated_examples = {k: list(chain(*examples[k])) for k in examples.keys()}
+        total_length = len(concatenated_examples[list(examples.keys())[0]])
+        # We drop the small remainder, and if the total_length < block_size  we exclude this batch and return an empty dict.
+        # We could add padding if the model supported it instead of this drop, you can customize this part to your needs.
+        total_length = (total_length // args.max_length) * args.max_length
+        # Split by chunks of max_len.
+        result = {
+            k: [t[i : i + args.max_length] for i in range(0, total_length, args.max_length)]
+            for k, t in concatenated_examples.items()
+        }
+        # result["labels"] = result["input_ids"].copy()
+        return result 
+
+    # Note that with `batched=True`, this map processes 1,000 texts together, so group_texts throws away a remainder
+    # for each of those groups of 1,000 texts. You can adjust that batch_size here but a higher value might be slower
+    # to preprocess.
+    #
+    # To speed up this part, we use multiprocessing. See the documentation of the map method for more information:
+    # https://huggingface.co/docs/datasets/package_reference/main_classes.html#datasets.Dataset.map
+    
+    column_names = list(dataset["train"].features)
+    tokenized_dataset = dataset.map(
+        tokenize_function,
+        batched=True,
+        remove_columns=column_names,
+    )
+    lm_dataset = tokenized_dataset.map(group_texts, batched=True)
+    train_ds = lm_dataset["train"]
+
+    # DataCollatorForLanguageModeling should automatically copy input_ids to labels
+    data_collator = DataCollatorForLanguageModeling(
+        tokenizer,
+        mlm=False,
+    )
+
     dataloader = prepare_dataloader(
         train_ds,
         batch_size=args.batch_size,
         shuffle=True,
         drop_last=True,
-        collate_fn=partial(tokenize_batch_for_pretrain, tokenizer=tokenizer, max_length=args.max_length),
+        #collate_fn=partial(tokenize_batch_for_pretrain, tokenizer=tokenizer, max_length=args.max_length),
+        #collate_fn=default_data_collator,
+        collate_fn=data_collator,
     )
 
     # ==============================
@@ -289,7 +351,7 @@ def main():
                     )
                     loss = outputs["loss"]
                 else:
-                    batch = next(dataloader_iter)
+                    batch = batch_to_cuda(next(dataloader_iter))
                     outputs = model(**batch)
                     loss = outputs[0]
                     booster.backward(loss, optimizer)
